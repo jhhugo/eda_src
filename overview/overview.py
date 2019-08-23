@@ -22,21 +22,25 @@ class WholeView():
             self.catcols = [c for c in self.train.columns if self.train[c].dtype == 'object']
         
     def _numfunc(self, c, data):
-        self.numstats.setdefault('count', list()).append(data.shape[0])
-        self.numstats.setdefault('missing', list()).append('%.2f%%' % (np.sum(np.isnan(data[c].values)) / data.shape[0] * 100))
-        self.numstats.setdefault('mean', list()).append(np.mean(data[c].values))
-        self.numstats.setdefault('std', list()).append(np.std(data[c].values))
-        self.numstats.setdefault('zeros / notnull', list()).append('%.2f%%' % (np.sum(np.where(data[c] == 0, 1, 0)) / np.sum(~np.isnan(data[c].values)) * 100))
-        self.numstats.setdefault('min', list()).append(np.min(data[c].values))
-        self.numstats.setdefault('median', list()).append(np.median(data[c].values))
-        self.numstats.setdefault('max', list()).append(np.max(data[c].values))
+        tmp = {}
+        tmp['count'] = data.shape[0]
+        tmp['missing'] = '%.2f%%' % (np.sum(np.isnan(data[c].values)) / data.shape[0] * 100)
+        tmp['mean'] = np.mean(data[c].values)
+        tmp['std'] = np.std(data[c].values)
+        tmp['zeros / notnull'] = '%.2f%%' % (np.sum(np.where(data[c] == 0, 1, 0)) / np.sum(~np.isnan(data[c].values)) * 100)
+        tmp['min'] = np.min(data[c].values)
+        tmp['median'] = np.median(data[c].values)
+        tmp['max'] = np.max(data[c].values)
+        return tmp
 
     def _catfunc(self, c, data):
-        self.catstats.setdefault('count', list()).append(data.shape[0])
-        self.catstats.setdefault('missing', list()).append('%.2f%%' % (data[c].isnull().sum() / data.shape[0] * 100))
-        self.catstats.setdefault('unique', list()).append(data.loc[data[c].notnull(), c].nunique())
-        self.catstats.setdefault('top', list()).append(data[c].mode().values[0])
-        self.catstats.setdefault('freq top / notnull', list()).append('%.2f%%' % ((data[c] == data[c].mode().values[0]).sum() / data[c].notnull().sum() * 100))
+        tmp = {}
+        tmp['count'] = data.shape[0]
+        tmp['missing'] = '%.2f%%' % (data[c].isnull().sum() / data.shape[0] * 100)
+        tmp['unique'] = data.loc[data[c].notnull(), c].nunique()
+        tmp['top'] = data[c].mode().values[0]
+        tmp['freq top / notnull'] = '%.2f%%' % ((data[c] == data[c].mode().values[0]).sum() / data[c].notnull().sum() * 100)
+        return tmp
 
     def _numstats(self, n_jobs):
         self.numstats = {}
@@ -53,29 +57,78 @@ class WholeView():
         # self.numstats['median'] = np.median(self.train[self.numcols].values, axis=0)
         # self.numstats['max'] = np.max(self.train[self.numcols].values, axis=0)
 
-        parallel(n_jobs)(delayed(self._numfunc)(c, self.train) for c in self.numcols)
+        numlist = Parallel(n_jobs)(delayed(self._numfunc)(c, self.train) for c in self.numcols)
+
         if self.test is not None:
-            parallel(n_jobs)(delayed(self._numfunc)(c, self.test) for c in self.numcols)
+            numlist += Parallel(n_jobs)(delayed(self._numfunc)(c, self.test) for c in self.numcols)
+        return numlist
 
     def _catstats(self, n_jobs):
         self.catstats = {}
-        parallel(n_jobs)(delayed(self._catfunc)(c, self.train) for c in self.catcols)
+        catlist = Parallel(n_jobs)(delayed(self._catfunc)(c, self.train) for c in self.catcols)
         if self.test is not None:
-            parallel(n_jobs)(delayed(self._catfunc)(c, self.test) for c in self.catcols)
+            catlist += Parallel(n_jobs)(delayed(self._catfunc)(c, self.test) for c in self.catcols)
+        return catlist
 
     def showstats(self, n_jobs=1):
         self._cols()
         # numstat
-        self._numstats(n_jobs)
+        m = len(self.numcols)
+        numlist = self._numstats(n_jobs)
         if self.test is not None:
+            for idx in range(m):
+                self.numstats.setdefault('count', list()).append(numlist[idx]['count'])
+                self.numstats.setdefault('count', list()).append(numlist[idx + m]['count'])
+                self.numstats.setdefault('missing', list()).append(numlist[idx]['missing'])
+                self.numstats.setdefault('missing', list()).append(numlist[idx + m]['missing'])
+                self.numstats.setdefault('mean', list()).append(numlist[idx]['mean'])
+                self.numstats.setdefault('mean', list()).append(numlist[idx + m]['mean'])
+                self.numstats.setdefault('std', list()).append(numlist[idx]['std'])
+                self.numstats.setdefault('std', list()).append(numlist[idx + m]['std'])
+                self.numstats.setdefault('zeros / notnull', list()).append(numlist[idx]['zeros / notnull'])
+                self.numstats.setdefault('zeros / notnull', list()).append(numlist[idx + m]['zeros / notnull'])
+                self.numstats.setdefault('min', list()).append(numlist[idx]['min'])
+                self.numstats.setdefault('min', list()).append(numlist[idx + m]['min'])
+                self.numstats.setdefault('median', list()).append(numlist[idx]['median'])
+                self.numstats.setdefault('median', list()).append(numlist[idx + m]['median'])
+                self.numstats.setdefault('max', list()).append(numlist[idx]['max'])
+                self.numstats.setdefault('max', list()).append(numlist[idx + m]['max'])        
             num_stat = pd.DataFrame(self.numstats, index=pd.MultiIndex.from_product([self.numcols, ['train', 'test']]))
         else:
+            for idx in range(m):
+                self.numstats.setdefault('count', list()).append(numlist[idx]['count'])
+                self.numstats.setdefault('missing', list()).append(numlist[idx]['missing'])
+                self.numstats.setdefault('mean', list()).append(numlist[idx]['mean'])
+                self.numstats.setdefault('std', list()).append(numlist[idx]['std'])
+                self.numstats.setdefault('zeros / notnull', list()).append(numlist[idx]['zeros / notnull'])
+                self.numstats.setdefault('min', list()).append(numlist[idx]['min'])
+                self.numstats.setdefault('median', list()).append(numlist[idx]['median'])
+                self.numstats.setdefault('max', list()).append(numlist[idx]['max'])
             num_stat = pd.DataFrame(self.numstats, index=self.numcols)
+
         # catstat
-        self._catstats(n_jobs)
+        n = len(self.catcols)
+        catlist = self._catstats(n_jobs)
         if self.test is not None:
+            for idx in range(n):
+                self.catstats.setdefault('count', list()).append(catlist[idx]['count'])
+                self.catstats.setdefault('count', list()).append(catlist[idx + n]['count'])
+                self.catstats.setdefault('missing', list()).append(catlist[idx]['missing'])
+                self.catstats.setdefault('missing', list()).append(catlist[idx + n]['missing'])
+                self.catstats.setdefault('unique', list()).append(catlist[idx]['unique'])
+                self.catstats.setdefault('unique', list()).append(catlist[idx + n]['unique'])
+                self.catstats.setdefault('top', list()).append(catlist[idx]['top'])
+                self.catstats.setdefault('top', list()).append(catlist[idx + n]['top'])
+                self.catstats.setdefault('freq top / notnull', list()).append(catlist[idx]['freq top / notnull'])
+                self.catstats.setdefault('freq top / notnull', list()).append(catlist[idx + n]['freq top / notnull'])
             cat_stat = pd.DataFrame(self.catstats, index=pd.MultiIndex.from_product([self.catcols, ['train', 'test']]))
         else:
+            for idx in range(n):
+                self.catstats.setdefault('count', list()).append(catlist[idx]['count'])
+                self.catstats.setdefault('missing', list()).append(catlist[idx]['missing'])
+                self.catstats.setdefault('unique', list()).append(catlist[idx]['unique'])
+                self.catstats.setdefault('top', list()).append(catlist[idx]['top'])
+                self.catstats.setdefault('freq top / notnull', list()).append(catlist[idx]['freq top / notnull'])
             cat_stat = pd.DataFrame(self.catstats, index=self.catcols)
         return num_stat, cat_stat
     
