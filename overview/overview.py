@@ -21,8 +21,24 @@ class WholeView():
         if self.catcols is None:
             self.catcols = [c for c in self.train.columns if self.train[c].dtype == 'object']
         
+    def _numfunc(self, c, data):
+        self.numstats.setdefault('count', list()).append(data.shape[0])
+        self.numstats.setdefault('missing', list()).append('%.2f%%' % (np.sum(np.isnan(data[c].values)) / data.shape[0] * 100))
+        self.numstats.setdefault('mean', list()).append(np.mean(data[c].values))
+        self.numstats.setdefault('std', list()).append(np.std(data[c].values))
+        self.numstats.setdefault('zeros / notnull', list()).append('%.2f%%' % (np.sum(np.where(data[c] == 0, 1, 0)) / np.sum(~np.isnan(data[c].values)) * 100))
+        self.numstats.setdefault('min', list()).append(np.min(data[c].values))
+        self.numstats.setdefault('median', list()).append(np.median(data[c].values))
+        self.numstats.setdefault('max', list()).append(np.max(data[c].values))
 
-    def _numstats(self):
+    def _catfunc(self, c, data):
+        self.catstats.setdefault('count', list()).append(data.shape[0])
+        self.catstats.setdefault('missing', list()).append('%.2f%%' % (data[c].isnull().sum() / data.shape[0] * 100))
+        self.catstats.setdefault('unique', list()).append(data.loc[data[c].notnull(), c].nunique())
+        self.catstats.setdefault('top', list()).append(data[c].mode().values[0])
+        self.catstats.setdefault('freq top / notnull', list()).append('%.2f%%' % ((data[c] == data[c].mode().values[0]).sum() / data[c].notnull().sum() * 100))
+
+    def _numstats(self, n_jobs):
         self.numstats = {}
         # if self.test is not None:
         #     data = 
@@ -37,52 +53,26 @@ class WholeView():
         # self.numstats['median'] = np.median(self.train[self.numcols].values, axis=0)
         # self.numstats['max'] = np.max(self.train[self.numcols].values, axis=0)
 
-        for c in self.numcols:
-            self.numstats.setdefault('count', list()).append(self.train.shape[0])
-            self.numstats.setdefault('missing', list()).append('%.2f%%' % (np.sum(np.isnan(self.train[c].values)) / self.train.shape[0] * 100))
-            self.numstats.setdefault('mean', list()).append(np.mean(self.train[c].values))
-            self.numstats.setdefault('std', list()).append(np.std(self.train[c].values))
-            self.numstats.setdefault('zeros / notnull', list()).append('%.2f%%' % (np.sum(np.where(self.train[c] == 0, 1, 0)) / np.sum(~np.isnan(self.train[c].values)) * 100))
-            self.numstats.setdefault('min', list()).append(np.min(self.train[c].values))
-            self.numstats.setdefault('median', list()).append(np.median(self.train[c].values))
-            self.numstats.setdefault('max', list()).append(np.max(self.train[c].values))
+        parallel(n_jobs)(delayed(self._numfunc)(c, self.train) for c in self.numcols)
+        if self.test is not None:
+            parallel(n_jobs)(delayed(self._numfunc)(c, self.test) for c in self.numcols)
 
-            if self.test is not None:
-                self.numstats['count'].append(self.test.shape[0])
-                self.numstats['missing'].append('%.2f%%' % (np.sum(np.isnan(self.test[c].values)) / self.test.shape[0] * 100))
-                self.numstats['mean'].append(np.mean(self.test[c].values))
-                self.numstats['std'].append(np.std(self.test[c].values))
-                self.numstats['zeros / notnull'].append('%.2f%%' % (np.sum(np.where(self.test[c] == 0, 1, 0)) / np.sum(~np.isnan(self.test[c].values)) * 100))
-                self.numstats['min'].append(np.min(self.test[c].values))
-                self.numstats['median'].append(np.median(self.test[c].values))
-                self.numstats['max'].append(np.max(self.test[c].values))
-
-    def _catstats(self):
+    def _catstats(self, n_jobs):
         self.catstats = {}
-        for c in self.catcols:
-            self.catstats.setdefault('count', list()).append(self.train.shape[0])
-            self.catstats.setdefault('missing', list()).append('%.2f%%' % (self.train[c].isnull().sum() / self.train.shape[0] * 100))
-            self.catstats.setdefault('unique', list()).append(self.train.loc[self.train[c].notnull(), c].nunique())
-            self.catstats.setdefault('top', list()).append(self.train[c].mode().values[0])
-            self.catstats.setdefault('freq top / notnull', list()).append('%.2f%%' % ((self.train[c] == self.train[c].mode().values[0]).sum() / self.train[c].notnull().sum() * 100))
+        parallel(n_jobs)(delayed(self._catfunc)(c, self.train) for c in self.catcols)
+        if self.test is not None:
+            parallel(n_jobs)(delayed(self._catfunc)(c, self.test) for c in self.catcols)
 
-            if self.test is not None:
-                self.catstats['count'].append(self.test.shape[0])
-                self.catstats['missing'].append('%.2f%%' % (self.test[c].isnull().sum() / self.test.shape[0] * 100))
-                self.catstats['unique'].append(self.test.loc[self.test[c].notnull(), c].nunique())
-                self.catstats['top'].append(self.train[c].mode().values[0])
-                self.catstats['freq top / notnull'].append('%.2f%%' % ((self.test[c] == self.test[c].mode().values[0]).sum() / self.test[c].notnull().sum() * 100))
-
-    def showstats(self):
+    def showstats(self, n_jobs=1):
         self._cols()
         # numstat
-        self._numstats()
+        self._numstats(n_jobs)
         if self.test is not None:
             num_stat = pd.DataFrame(self.numstats, index=pd.MultiIndex.from_product([self.numcols, ['train', 'test']]))
         else:
             num_stat = pd.DataFrame(self.numstats, index=self.numcols)
         # catstat
-        self._catstats()
+        self._catstats(n_jobs)
         if self.test is not None:
             cat_stat = pd.DataFrame(self.catstats, index=pd.MultiIndex.from_product([self.catcols, ['train', 'test']]))
         else:
