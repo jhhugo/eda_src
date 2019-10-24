@@ -1,4 +1,10 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from joblib import Parallel, delayed
+# from multiprocessing import Manager
+
 
 class WholeView():
     def __init__(self, train, test=None, numcols=None, catcols=None):
@@ -13,6 +19,10 @@ class WholeView():
         self.test = test
         self.numcols = numcols
         self.catcols = catcols
+        # ma = Manager()
+        # self.ns = ma.Namespace()
+        # self.ns.train = self.train
+        # self.ns.test = self.test
     
     def _cols(self):
         if self.numcols is None:
@@ -24,13 +34,14 @@ class WholeView():
     def _numfunc(self, c, data):
         tmp = {}
         tmp['count'] = data.shape[0]
+        tmp['ncount'] = data[c].nunique()
         tmp['missing'] = '%.2f%%' % (np.sum(np.isnan(data[c].values)) / data.shape[0] * 100)
-        tmp['mean'] = np.mean(data[c].values)
-        tmp['std'] = np.std(data[c].values)
+        tmp['mean'] = data[c].mean()
+        tmp['std'] = data[c].std()
         tmp['zeros / notnull'] = '%.2f%%' % (np.sum(np.where(data[c] == 0, 1, 0)) / np.sum(~np.isnan(data[c].values)) * 100)
-        tmp['min'] = np.min(data[c].values)
-        tmp['median'] = np.median(data[c].values)
-        tmp['max'] = np.max(data[c].values)
+        tmp['min'] = data[c].min()
+        tmp['median'] = data[c].median()
+        tmp['max'] = data[c].max()
         return tmp
 
     def _catfunc(self, c, data):
@@ -42,7 +53,17 @@ class WholeView():
         tmp['freq top / notnull'] = '%.2f%%' % ((data[c] == data[c].mode().values[0]).sum() / data[c].notnull().sum() * 100)
         return tmp
 
-    def _numstats(self, n_jobs):
+    def _overlap(self, c, train, test):
+        tmp = {}
+        cover = set(train[train[c].notnull()][c].unique()).intersection(set(test[test[c].notnull()][c].unique()))
+        tmp['overlap长度'] = len(cover)
+        tmp['overlap_tr长度占比'] = train[train[c].isin(list(cover))].shape[0] / train.shape[0]
+        tmp['overlap_te长度占比'] = test[test[c].isin(list(cover))].shape[0] / test.shape[0]
+        tmp['overlap_tr取值占比'] = tmp['overlap长度'] / train[train[c].notnull()][c].nunique()
+        tmp['overlap_te取值占比'] = tmp['overlap长度'] / test[test[c].notnull()][c].nunique()
+        return tmp
+
+    def _numstats(self, n_jobs, verbose):
         self.numstats = {}
         # if self.test is not None:
         #     data = 
@@ -57,28 +78,31 @@ class WholeView():
         # self.numstats['median'] = np.median(self.train[self.numcols].values, axis=0)
         # self.numstats['max'] = np.max(self.train[self.numcols].values, axis=0)
 
-        numlist = Parallel(n_jobs)(delayed(self._numfunc)(c, self.train) for c in self.numcols)
+        numlist = Parallel(n_jobs, verbose=verbose)(delayed(self._numfunc)(c, self.train) for c in self.numcols)
 
         if self.test is not None:
-            numlist += Parallel(n_jobs)(delayed(self._numfunc)(c, self.test) for c in self.numcols)
+            numlist += Parallel(n_jobs, verbose=verbose)(delayed(self._numfunc)(c, self.test) for c in self.numcols)
         return numlist
 
-    def _catstats(self, n_jobs):
+    def _catstats(self, n_jobs, verbose):
         self.catstats = {}
-        catlist = Parallel(n_jobs)(delayed(self._catfunc)(c, self.train) for c in self.catcols)
+        catlist = Parallel(n_jobs, verbose=verbose)(delayed(self._catfunc)(c, self.train) for c in self.catcols)
         if self.test is not None:
-            catlist += Parallel(n_jobs)(delayed(self._catfunc)(c, self.test) for c in self.catcols)
+            catlist += Parallel(n_jobs, verbose=verbose)(delayed(self._catfunc)(c, self.test) for c in self.catcols)
+            catlist += Parallel(n_jobs, verbose=verbose)(delayed(self._overlap)(c, self.train, self.test) for c in self.catcols)
         return catlist
 
-    def showstats(self, n_jobs=1):
+    def showstats(self, n_jobs=1, verbose=False):
         self._cols()
         # numstat
         m = len(self.numcols)
-        numlist = self._numstats(n_jobs)
+        numlist = self._numstats(n_jobs, verbose)
         if self.test is not None:
             for idx in range(m):
                 self.numstats.setdefault('count', list()).append(numlist[idx]['count'])
                 self.numstats.setdefault('count', list()).append(numlist[idx + m]['count'])
+                self.numstats.setdefault('ncount', list()).append(numlist[idx]['ncount'])
+                self.numstats.setdefault('ncount', list()).append(numlist[idx + m]['ncount'])
                 self.numstats.setdefault('missing', list()).append(numlist[idx]['missing'])
                 self.numstats.setdefault('missing', list()).append(numlist[idx + m]['missing'])
                 self.numstats.setdefault('mean', list()).append(numlist[idx]['mean'])
@@ -97,6 +121,7 @@ class WholeView():
         else:
             for idx in range(m):
                 self.numstats.setdefault('count', list()).append(numlist[idx]['count'])
+                self.numstats.setdefault('ncount', list()).append(numlist[idx]['ncount'])
                 self.numstats.setdefault('missing', list()).append(numlist[idx]['missing'])
                 self.numstats.setdefault('mean', list()).append(numlist[idx]['mean'])
                 self.numstats.setdefault('std', list()).append(numlist[idx]['std'])
@@ -108,7 +133,9 @@ class WholeView():
 
         # catstat
         n = len(self.catcols)
-        catlist = self._catstats(n_jobs)
+        catlist = self._catstats(n_jobs, verbose)
+        # print(len(catlist))
+        # print(catlist[idx + 2*n])
         if self.test is not None:
             for idx in range(n):
                 self.catstats.setdefault('count', list()).append(catlist[idx]['count'])
@@ -121,6 +148,13 @@ class WholeView():
                 self.catstats.setdefault('top', list()).append(catlist[idx + n]['top'])
                 self.catstats.setdefault('freq top / notnull', list()).append(catlist[idx]['freq top / notnull'])
                 self.catstats.setdefault('freq top / notnull', list()).append(catlist[idx + n]['freq top / notnull'])
+                self.catstats.setdefault('overlap长度', list()).append(catlist[idx + 2*n]['overlap长度'])
+                self.catstats.setdefault('overlap长度', list()).append(catlist[idx + 2*n]['overlap长度'])
+                self.catstats.setdefault('overlap长度占比', list()).append(catlist[idx + 2*n]['overlap_tr长度占比'])
+                self.catstats.setdefault('overlap长度占比', list()).append(catlist[idx + 2*n]['overlap_te长度占比'])
+                self.catstats.setdefault('overlap取值占比', list()).append(catlist[idx + 2*n]['overlap_tr取值占比'])
+                self.catstats.setdefault('overlap取值占比', list()).append(catlist[idx + 2*n]['overlap_te取值占比'])
+
             cat_stat = pd.DataFrame(self.catstats, index=pd.MultiIndex.from_product([self.catcols, ['train', 'test']]))
         else:
             for idx in range(n):
